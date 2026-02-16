@@ -1,7 +1,7 @@
 package com.luno.echo.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.luno.echo.model.Post;
+import com.luno.echo.model.entity.Post;
 import com.luno.echo.service.PostService;
 import com.luno.echo.mapper.PostMapper;
 import org.springframework.stereotype.Service;

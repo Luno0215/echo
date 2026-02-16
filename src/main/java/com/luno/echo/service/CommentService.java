@@ -1,6 +1,6 @@
 package com.luno.echo.service;
 
-import com.luno.echo.model.Comment;
+import com.luno.echo.model.entity.Comment;
 import com.baomidou.mybatisplus.extension.service.IService;
 
 /**

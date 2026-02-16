@@ -1,4 +1,4 @@
-package com.luno.echo.model;
+package com.luno.echo.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;

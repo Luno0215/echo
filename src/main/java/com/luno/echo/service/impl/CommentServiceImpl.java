@@ -1,7 +1,7 @@
 package com.luno.echo.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.luno.echo.model.Comment;
+import com.luno.echo.model.entity.Comment;
 import com.luno.echo.service.CommentService;
 import com.luno.echo.mapper.CommentMapper;
 import org.springframework.stereotype.Service;

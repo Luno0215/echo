@@ -1,4 +1,4 @@
-package com.luno.echo.model;
+package com.luno.echo.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
@@ -9,47 +9,35 @@ import java.time.LocalDateTime;
 import lombok.Data;
 
 /**
- * 树洞帖子表
- * @TableName tb_post
+ * 评论表
+ * @TableName tb_comment
  */
-@TableName(value ="tb_post")
+@TableName(value ="tb_comment")
 @Data
-public class Post implements Serializable {
+public class Comment implements Serializable {
     /**
-     * 帖子ID
+     * 
      */
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
     /**
-     * 发帖人ID
+     * 关联帖子ID
+     */
+    @TableField(value = "post_id")
+    private Long postId;
+
+    /**
+     * 评论人ID
      */
     @TableField(value = "user_id")
     private Long userId;
 
     /**
-     * 树洞内容
+     * 评论内容
      */
     @TableField(value = "content")
     private String content;
-
-    /**
-     * 标签(心情/吐槽/表白)
-     */
-    @TableField(value = "tag")
-    private String tag;
-
-    /**
-     * 点赞数(Redis同步)
-     */
-    @TableField(value = "like_count")
-    private Integer likeCount;
-
-    /**
-     * 评论数
-     */
-    @TableField(value = "comment_count")
-    private Integer commentCount;
 
     /**
      * 
