@@ -81,7 +81,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
 
         // 3. 加密 (千万不能存明文密码！)
         // 使用 Hutool 的 MD5 工具，加盐加密
-        String encryptPassword = DigestUtil.md5Hex(SALT + username);
+        String encryptPassword = DigestUtil.md5Hex(SALT + password);
 
         // 4. 插入数据 (这里字段较多，不用链式)
         User user = new User();
@@ -102,31 +102,30 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
     }
 
     @Override
-    public String userLogin(String userAccount, String userPassword) {
+    public String userLogin(String username, String password) {
         // 1. 校验参数是否为空
-        if (StrUtil.hasBlank(userAccount, userPassword)) {
+        if (StrUtil.hasBlank(username, password)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
         }
-        if (userAccount.length() < 4) {
+        if (username.length() < 4) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号错误");
         }
-        if (userPassword.length() < 6) {
+        if (password.length() < 6) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "密码错误");
         }
 
         // 2. 加密密码 (MD5 + SALT)
-        String encryptPassword = DigestUtil.md5Hex(SALT + userPassword);
-
+        String encryptPassword = DigestUtil.md5Hex(SALT + password);
 
         // 3. 查询数据库 (使用 LambdaQuery 链式调用)
         User user = this.lambdaQuery()
-                .eq(User::getUsername, userAccount)
+                .eq(User::getUsername, username)
                 .eq(User::getPassword, encryptPassword)
                 .one();
 
         // 4. 用户不存在或密码错误
         if (user == null) {
-            log.info("user login failed, userAccount cannot match password");
+            log.info("user login failed, username cannot match password");
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号或密码错误");
         }
 
