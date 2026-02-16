@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# 忽略本地开发环境的敏感配置
+src/main/resources/application-dev.yml
