@@ -20,6 +20,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.luno.echo.common.constant.RedisConstants.LOGIN_USER_KEY;
+import static com.luno.echo.common.constant.RedisConstants.LOGIN_USER_TTL;
+
 /**
 * @author Luno
 * @description 针对表【tb_user(用户表)】的数据库操作Service实现
@@ -142,8 +145,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
 
         // 8. 存入 Redis
         // Key: login:token:随机值  Value: 用户JSON  TTL: 30分钟
-        String tokenKey = "login:token:" + token;
-        stringRedisTemplate.opsForValue().set(tokenKey, userJson, 30L, TimeUnit.MINUTES);
+        String tokenKey = LOGIN_USER_KEY + token;
+        stringRedisTemplate.opsForValue().set(tokenKey, userJson, LOGIN_USER_TTL, TimeUnit.MINUTES);
 
         // 9. 返回 Token 给 Controller
         return token;
