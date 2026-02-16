@@ -1,15 +1,22 @@
 package com.luno.echo.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.entity.User;
 import com.luno.echo.service.UserService;
 import com.luno.echo.mapper.UserMapper;
+import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -19,14 +26,17 @@ import java.util.regex.Pattern;
 * @createDate 2026-02-16 16:25:23
 */
 @Service
+@Slf4j
 public class UserServiceImpl extends ServiceImpl<UserMapper, User>
     implements UserService{
-
 
     /**
      * 盐值，用于混淆密码 (随便写，越复杂越好)
      */
     private static final String SALT = "luno_code_is_good";
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public long userRegister(String username, String password, String checkPassword) {
@@ -90,6 +100,69 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         // 5. 返回新用户 ID
         return user.getId();
     }
+
+    @Override
+    public String userLogin(String userAccount, String userPassword) {
+        // 1. 校验参数是否为空
+        if (StrUtil.hasBlank(userAccount, userPassword)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
+        }
+        if (userAccount.length() < 4) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号错误");
+        }
+        if (userPassword.length() < 6) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "密码错误");
+        }
+
+        // 2. 加密密码 (MD5 + SALT)
+        String encryptPassword = DigestUtil.md5Hex(SALT + userPassword);
+
+
+        // 3. 查询数据库 (使用 LambdaQuery 链式调用)
+        User user = this.lambdaQuery()
+                .eq(User::getUsername, userAccount)
+                .eq(User::getPassword, encryptPassword)
+                .one();
+
+        // 4. 用户不存在或密码错误
+        if (user == null) {
+            log.info("user login failed, userAccount cannot match password");
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号或密码错误");
+        }
+
+        // 5. 用户脱敏 (重要！防止密码泄露)
+        User safetyUser = getSafetyUser(user);
+
+        // 6. 随机生成 Token (作为登录令牌)
+        // 使用 Hutool 的 UUID，true 表示去掉了横线，更简洁
+        String token = UUID.randomUUID().toString(true);
+
+        // 7. 将 User 对象转为 JSON 字符串
+        // 这里可以直接存 JSON，简单方便
+        String userJson = JSONUtil.toJsonStr(safetyUser);
+
+        // 8. 存入 Redis
+        // Key: login:token:随机值  Value: 用户JSON  TTL: 30分钟
+        String tokenKey = "login:token:" + token;
+        stringRedisTemplate.opsForValue().set(tokenKey, userJson, 30L, TimeUnit.MINUTES);
+
+        // 9. 返回 Token 给 Controller
+        return token;
+    }
+
+    /**
+     * 脱敏逻辑
+     */
+    public User getSafetyUser(User originUser) {
+        if (originUser == null) {
+            return null;
+        }
+        User safetyUser = new User();
+        BeanUtil.copyProperties(originUser, safetyUser); // 使用 Hutool 快速拷贝属性
+        safetyUser.setPassword(null); // 擦除密码
+        return safetyUser;
+    }
+
 }
 
 
