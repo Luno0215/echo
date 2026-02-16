@@ -1,5 +1,6 @@
 package com.luno.echo.service;
 
+import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.entity.Post;
 import com.baomidou.mybatisplus.extension.service.IService;
 
@@ -10,4 +11,10 @@ import com.baomidou.mybatisplus.extension.service.IService;
 */
 public interface PostService extends IService<Post> {
 
+    /**
+     * 添加帖子
+     * @param postAddRequest 帖子信息
+     * @return 帖子 ID
+     */
+    long addPost(PostAddRequest postAddRequest);
 }
