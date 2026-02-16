@@ -65,10 +65,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
 
         // 1.4 校验账户是否包含特殊字符 (只允许数字、字母、下划线)
         // 使用正则校验
-        String validPattern = "[a-zA-Z0-9_]+";
-        Matcher matcher = Pattern.compile(validPattern).matcher(username);
-        if (!matcher.find()) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR, "账户包含特殊字符,只允许数字、字母、下划线");
+        if (!username.matches("[a-zA-Z0-9_]+")) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "账户包含特殊字符...");
         }
 
         // 2. 查重 (关键逻辑：去数据库查)
