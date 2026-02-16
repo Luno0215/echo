@@ -26,7 +26,11 @@ spring:
           max-wait: -1ms
           max-idle: 8
           min-idle: 0
-
+# MP log
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+# base log
 logging:
   level:
     com.luno.echo: DEBUG
