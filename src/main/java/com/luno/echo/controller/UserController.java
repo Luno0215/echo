@@ -3,15 +3,14 @@ package com.luno.echo.controller;
 import cn.hutool.core.util.StrUtil;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.Result;
+import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.UserLoginRequest;
 import com.luno.echo.model.dto.UserRegisterRequest;
+import com.luno.echo.model.entity.User;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 
 /**
@@ -74,6 +73,19 @@ public class UserController {
 
         // 返回 token 给前端
         return Result.ok(token);
+    }
+
+    /**
+     * 获取当前用户 (测试拦截器是否生效)
+     */
+    @GetMapping("/current")
+    public Result<User> getCurrentUser() {
+        // 直接从 ThreadLocal 拿，拦截器已经帮我们放进去了
+        User user = UserHolder.getUser();
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN);
+        }
+        return Result.ok(user);
     }
 
 }
