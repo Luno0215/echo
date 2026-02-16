@@ -17,4 +17,11 @@ public interface PostService extends IService<Post> {
      * @return 帖子 ID
      */
     long addPost(PostAddRequest postAddRequest);
+
+    /**
+     * 删除帖子
+     * @param postId 帖子 ID
+     * @return 是否成功
+     */
+    boolean deletePost(Long postId);
 }

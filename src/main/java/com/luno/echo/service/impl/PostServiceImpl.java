@@ -56,6 +56,30 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         // 5. 返回帖子 ID
         return post.getId();
     }
+
+    @Override
+    public boolean deletePost(Long postId) {
+        // 1. 获取当前用户
+        User loginUser = UserHolder.getUser();
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN);
+        }
+
+        // 2. 查询帖子是否存在
+        Post post = this.getById(postId);
+        if (post == null) {
+            throw new BusinessException(ErrorCode.NULL_ERROR, "帖子不存在");
+        }
+
+        // 3. 【核心权限校验】只能删除自己的帖子
+        // 注意：Long 类型比较要用 equals，不能用 ==
+        if (!post.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH, "你无权删除他人的树洞");
+        }
+
+        // 4. 执行删除
+        return this.removeById(postId);
+    }
 }
 
 
