@@ -1,8 +1,10 @@
 package com.luno.echo.controller;
 
+import cn.hutool.core.util.StrUtil;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.Result;
 import com.luno.echo.common.exception.BusinessException;
+import com.luno.echo.model.dto.UserLoginRequest;
 import com.luno.echo.model.dto.UserRegisterRequest;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
@@ -48,4 +50,30 @@ public class UserController {
         // 4. 返回统一结果
         return Result.ok(result);
     }
+
+    /**
+     * 用户登录接口
+     *
+     * @param userLoginRequest 登录请求体
+     * @return 返回 Token (String)
+     */
+    @PostMapping("/login")
+    public Result<String> userLogin(@RequestBody UserLoginRequest userLoginRequest) {
+        if (userLoginRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        String userAccount = userLoginRequest.getUsername();
+        String userPassword = userLoginRequest.getPassword();
+        if (StrUtil.hasBlank(userAccount, userPassword)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        // 调用 Service，拿到 token
+        String token = userService.userLogin(userAccount, userPassword);
+
+        // 返回 token 给前端
+        return Result.ok(token);
+    }
+
 }
