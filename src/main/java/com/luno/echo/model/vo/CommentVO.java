@@ -7,12 +7,15 @@ import java.time.LocalDateTime;
 @Data
 public class CommentVO implements Serializable {
     private Long id;
-    private Long postId; // 属于哪个帖子
-    private Long userId; // 谁发的
-    private String content; // 内容
+    private Long postId;
+    private Long userId;
+    private String content;
     private LocalDateTime createTime;
     
-    // --- 扩展字段 ---
-    // private String userNickname; // 发评论人的昵称 (暂时先不填，后续教你关联查询)
-    // private String userAvatar;   // 发评论人的头像
+    // --- 关联用户信息 (由 Service 层填充) ---
+    private String username;  // 用户名
+    private String nickname;  // 昵称
+    private String avatar;    // 头像
+    
+    // (可选) isLiked; // 如果你想做评论点赞，也可以加这个
 }
