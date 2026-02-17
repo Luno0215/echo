@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
+import com.luno.echo.mapper.PostMapper;
 import com.luno.echo.model.dto.CommentAddRequest;
 import com.luno.echo.model.dto.CommentQueryRequest;
 import com.luno.echo.model.entity.Comment;
@@ -17,9 +18,11 @@ import com.luno.echo.mapper.CommentMapper;
 import com.luno.echo.service.PostService;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,7 +43,17 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment>
     @Resource
     private UserService userService; // 注入 UserService
 
-    @Transactional(rollbackFor = Exception.class)
+    @Resource
+    private CommentMapper commentMapper;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private PostMapper postMapper;
+
+    // 新增评论版本1 （没用Redis缓存）
+    /*@Transactional(rollbackFor = Exception.class)
     @Override
     public long addComment(CommentAddRequest commentAddRequest) {
         // 1. 登录校验
@@ -77,6 +90,33 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment>
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "更新评论数失败");
         }
 
+        return comment.getId();
+    }*/
+
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public long addComment(CommentAddRequest commentAddRequest) {
+        // 1. 登录校验
+        Long userId = UserHolder.getUser().getId();
+
+        // 2. 准备数据
+        Comment comment = new Comment();
+        BeanUtil.copyProperties(commentAddRequest, comment);
+        comment.setUserId(userId);
+        comment.setCreateTime(LocalDateTime.now());
+
+        // 3. 插入数据库
+        // 💡 重点：执行完这行，comment.getId() 就有值了！
+        commentMapper.insert(comment);
+
+        // 4. 更新帖子评论数
+        postMapper.incrCommentCount(commentAddRequest.getPostId());
+
+        // 5. 删除 Redis 缓存
+        String cacheKey = "echo:post:detail:" + commentAddRequest.getPostId();
+        stringRedisTemplate.delete(cacheKey);
+
+        // 6. 返回生成的 ID
         return comment.getId();
     }
 
