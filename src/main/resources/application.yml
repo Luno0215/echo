@@ -34,3 +34,11 @@ mybatis-plus:
 logging:
   level:
     com.luno.echo: DEBUG
+
+# aliyun OSS
+aliyun:
+  oss:
+    endpoint: # your endpoint
+    access-key-id: # your access-key-id
+    access-key-secret: # your access-key-secret
+    bucket-name: echo-luno
