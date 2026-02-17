@@ -5,6 +5,7 @@ import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Post;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.luno.echo.model.vo.PostDetailVO;
 import com.luno.echo.model.vo.PostVO;
 
 /**
@@ -38,4 +39,11 @@ public interface PostService extends IService<Post> {
      * @param postId 帖子 ID
      */
     void likePost(Long postId);
+
+    /**
+     * 获取帖子详情
+     * @param id
+     * @return 帖子详情VO
+     */
+    PostDetailVO getPostDetail(Long id);
 }

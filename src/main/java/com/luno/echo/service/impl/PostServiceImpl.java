@@ -1,7 +1,9 @@
 package com.luno.echo.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -9,18 +11,28 @@ import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.constant.RedisConstants;
 import com.luno.echo.common.exception.BusinessException;
+import com.luno.echo.mapper.CommentMapper;
 import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
+import com.luno.echo.model.entity.Comment;
 import com.luno.echo.model.entity.Post;
 import com.luno.echo.model.entity.User;
+import com.luno.echo.model.vo.PostCommentVO;
+import com.luno.echo.model.vo.PostDetailVO;
+import com.luno.echo.model.vo.PostUserVO;
 import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import com.luno.echo.mapper.PostMapper;
+import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +46,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
     @Resource
     public StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private UserService userService;
+
+    @Resource
+    private CommentMapper commentMapper; // 假设你有这个 Mapper
+
 
     @Override
     public long addPost(PostAddRequest postAddRequest) {
@@ -137,9 +156,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         return postVOPage;
     }
 
-    /**
-     * 点赞 / 取消点赞 (核心业务)
-     */
     @Override
     public void likePost(Long postId) {
         // 1. 获取当前登录用户
@@ -182,6 +198,111 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
                 stringRedisTemplate.opsForSet().add(key, userId.toString());
             }
         }
+    }
+
+    @Override
+    public PostDetailVO getPostDetail(Long id) {
+        String cacheKey = "echo:post:detail:" + id;
+
+        // 1. 【Redis 读取】公共数据
+        String json = stringRedisTemplate.opsForValue().get(cacheKey);
+        PostDetailVO vo = null;
+
+        if (StrUtil.isNotBlank(json)) {
+            vo = JSONUtil.toBean(json, PostDetailVO.class);
+        } else {
+            // 2. 【DB 查询】缓存未命中，开始组装
+            vo = assemblePostDetail(id);
+            // 3. 【Redis 写入】写入公共数据 (过期时间 30 分钟)
+            stringRedisTemplate.opsForValue().set(cacheKey, JSONUtil.toJsonStr(vo), 30, TimeUnit.MINUTES);
+        }
+
+        // 4. 【浏览量】Redis 原子自增 (独立于 VO 缓存)
+        // 使用 String 结构单独存浏览量，避免每次改浏览量都要重写整个大 JSON
+        Long viewCount = stringRedisTemplate.opsForValue().increment("echo:post:view:" + id);
+        vo.setViewCount(viewCount.intValue());
+
+        // 5. 【个性化填充】这一步最关键！不能缓存！
+        // 获取当前登录用户
+        User loginUser = UserHolder.getUser();
+        if (loginUser != null) {
+            // 5.1 判断是不是楼主
+            vo.setOwner(loginUser.getId().equals(vo.getAuthor().getId()));
+
+            // 5.2 判断是否点过赞 (去查 Redis 的 Set 结构: echo:post:like:1)
+            String likeKey = "echo:post:like:" + id;
+            Boolean isLiked = stringRedisTemplate.opsForSet().isMember(likeKey, loginUser.getId().toString());
+            vo.setLiked(Boolean.TRUE.equals(isLiked));
+
+            // 5.3 判断评论列表中，哪些是自己发的 (可选)
+            if (CollUtil.isNotEmpty(vo.getCommentList())) {
+                for (PostCommentVO commentVO : vo.getCommentList()) {
+                    commentVO.setOwner(loginUser.getId().equals(commentVO.getCommenter().getId()));
+                }
+            }
+        }
+
+        return vo;
+    }
+
+    /**
+     * 🕵️‍♂️ 从数据库组装完整的 VO (只有缓存失效才走这里)
+     */
+    private PostDetailVO assemblePostDetail(Long postId) {
+        // A. 查帖子
+        Post post = this.getById(postId);
+        if (post == null) throw new BusinessException(ErrorCode.PARAMS_ERROR);
+
+        PostDetailVO vo = new PostDetailVO();
+        BeanUtil.copyProperties(post, vo);
+
+        // B. 查楼主信息
+        User author = userService.getById(post.getUserId());
+        PostUserVO authorVO = new PostUserVO();
+        if (author != null) {
+            authorVO.setId(author.getId());
+            authorVO.setNickname(author.getNickname()); // 用 nickname 而不是 username
+            authorVO.setAvatar(author.getAvatar());
+        }
+        vo.setAuthor(authorVO);
+
+        // C. 查评论列表 (一次性查出所有评论)
+        List<Comment> comments = commentMapper.selectList(
+                new QueryWrapper<Comment>().eq("post_id", postId).orderByDesc("create_time")
+        );
+
+        // D. 组装评论 VO (包含评论者信息)
+        List<PostCommentVO> commentVOList = new ArrayList<>();
+        if (CollUtil.isNotEmpty(comments)) {
+            // D-1. 提取所有评论者的 ID (避免 N+1 查询)
+            Set<Long> userIds = comments.stream().map(Comment::getUserId).collect(Collectors.toSet());
+
+            // D-2. 批量查出所有用户
+            List<User> users = userService.listByIds(userIds);
+            Map<Long, User> userMap = users.stream().collect(Collectors.toMap(User::getId, u -> u));
+
+            // D-3. 转换
+            for (Comment c : comments) {
+                PostCommentVO cVO = new PostCommentVO();
+                cVO.setId(c.getId());
+                cVO.setContent(c.getContent());
+                cVO.setCreateTime(c.getCreateTime());
+
+                // 填充评论者
+                User u = userMap.get(c.getUserId());
+                if (u != null) {
+                    PostUserVO uVO = new PostUserVO();
+                    uVO.setId(u.getId());
+                    uVO.setNickname(u.getNickname());
+                    uVO.setAvatar(u.getAvatar());
+                    cVO.setCommenter(uVO);
+                }
+                commentVOList.add(cVO);
+            }
+        }
+        vo.setCommentList(commentVOList);
+
+        return vo;
     }
 }
 

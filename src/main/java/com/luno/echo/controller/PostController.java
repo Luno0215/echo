@@ -6,6 +6,7 @@ import com.luno.echo.common.Result;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
+import com.luno.echo.model.vo.PostDetailVO;
 import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import jakarta.annotation.Resource;
@@ -90,6 +91,25 @@ public class PostController {
         postService.likePost(id);
 
         return Result.ok("操作成功");
+    }
+
+    /**
+     *
+     *
+     * @param id
+     * @return
+     */
+
+    /**
+     * 获取帖子详情
+     * 接口：GET /post/detail/{id}
+     */
+    @GetMapping("/detail/{id}")
+    public Result<PostDetailVO> getPostDetail(@PathVariable("id") Long id) {
+        if (id == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        return Result.ok(postService.getPostDetail(id));
     }
 
 }
