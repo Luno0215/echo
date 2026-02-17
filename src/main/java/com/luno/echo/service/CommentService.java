@@ -1,7 +1,9 @@
 package com.luno.echo.service;
 
+import com.luno.echo.model.dto.CommentAddRequest;
 import com.luno.echo.model.entity.Comment;
 import com.baomidou.mybatisplus.extension.service.IService;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
 * @author Luno
@@ -10,4 +12,11 @@ import com.baomidou.mybatisplus.extension.service.IService;
 */
 public interface CommentService extends IService<Comment> {
 
+    /**
+     * 添加评论
+     * @param commentAddRequest 评论信息
+     * @return 评论 ID
+     */
+    @Transactional(rollbackFor = Exception.class) // 核心：开启事务，任何异常都回滚
+    long addComment(CommentAddRequest commentAddRequest);
 }
