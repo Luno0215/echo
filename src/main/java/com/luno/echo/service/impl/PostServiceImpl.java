@@ -252,6 +252,17 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             stringRedisTemplate.opsForValue().set(cacheKey, JSONUtil.toJsonStr(vo), 30, TimeUnit.MINUTES);
         }
 
+        // 【强制修正】去 Redis 查实时的点赞数，防止刚取消完点赞导致点赞数不一致
+        String likeKey = "echo:post:like:" + id;
+
+        // 获取 Redis 里的真实个数 (比如你取消了点赞，这里现在就是 8)
+        Long realLikeCount = stringRedisTemplate.opsForSet().size(likeKey);
+
+        // 只要 Redis 里有数，就以 Redis 为准！扔掉数据库那个旧的 9
+        if (realLikeCount != null && realLikeCount > 0) {
+            vo.setLikeCount(realLikeCount.intValue());
+        }
+
         // 4. 【浏览量】Redis 原子自增 (独立于 VO 缓存)
         // 使用 String 结构单独存浏览量，避免每次改浏览量都要重写整个大 JSON
         Long viewCount = stringRedisTemplate.opsForValue().increment("echo:post:view:" + id);
@@ -265,7 +276,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             vo.setOwner(loginUser.getId().equals(vo.getAuthor().getId()));
 
             // 5.2 判断是否点过赞 (去查 Redis 的 Set 结构: echo:post:like:1)
-            String likeKey = "echo:post:like:" + id;
             Boolean isLiked = stringRedisTemplate.opsForSet().isMember(likeKey, loginUser.getId().toString());
             vo.setLiked(Boolean.TRUE.equals(isLiked));
 
