@@ -5,6 +5,7 @@ import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Post;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.luno.echo.model.vo.PostVO;
 
 /**
 * @author Luno
@@ -28,9 +29,13 @@ public interface PostService extends IService<Post> {
     boolean deletePost(Long postId);
 
     /**
-     * 分页查询帖子
-     * @param postQueryRequest 查询条件
-     * @return 帖子列表
+     * 分页获取帖子列表（返回 VO）
      */
-    Page<Post> listPostByPage(PostQueryRequest postQueryRequest);
+    Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest);
+
+    /**
+     * 点赞帖子
+     * @param postId 帖子 ID
+     */
+    void likePost(Long postId);
 }

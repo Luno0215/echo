@@ -6,7 +6,7 @@ import com.luno.echo.common.Result;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
-import com.luno.echo.model.entity.Post;
+import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
@@ -46,21 +46,40 @@ public class PostController {
 
     /**
      * 分页获取帖子列表
-     * GET /post/list/page?current=1&pageSize=10&searchText=哈哈
+     * 接口：GET /post/list/page
      */
     @GetMapping("/list/page")
-    public Result<Page<Post>> listPostByPage(PostQueryRequest postQueryRequest) {
+    public Result<Page<PostVO>> listPostByPage(PostQueryRequest postQueryRequest) {
         if (postQueryRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
 
-        // 限制爬虫：如果一次性要把 100 条以上，强制改成 20 条
+        // 限制爬虫
         if (postQueryRequest.getPageSize() > 20) {
             postQueryRequest.setPageSize(20);
         }
 
-        Page<Post> postPage = postService.listPostByPage(postQueryRequest);
-        return Result.ok(postPage);
+        // 调用 Service 获取 VO 分页对象
+        Page<PostVO> postVOPage = postService.listPostByPage(postQueryRequest);
+
+        return Result.ok(postVOPage);
+    }
+
+    /**
+     * 【新增】点赞 / 取消点赞
+     * 接口：POST /post/like/{id}
+     */
+    @PostMapping("/like/{id}")
+    public Result<String> likePost(@PathVariable("id") Long id) {
+        // 1. 简单参数校验
+        if (id == null || id <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        // 2. 调用 Service (Service 里已经判断了是点赞还是取消)
+        postService.likePost(id);
+
+        return Result.ok("操作成功");
     }
 
 }

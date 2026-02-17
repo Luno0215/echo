@@ -1,19 +1,27 @@
 package com.luno.echo.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
+import com.luno.echo.common.constant.RedisConstants;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Post;
 import com.luno.echo.model.entity.User;
+import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import com.luno.echo.mapper.PostMapper;
+import jakarta.annotation.Resource;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
 * @author Luno
@@ -23,6 +31,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     implements PostService{
+
+    @Resource
+    public StringRedisTemplate stringRedisTemplate;
 
     @Override
     public long addPost(PostAddRequest postAddRequest) {
@@ -85,29 +96,98 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     }
 
     @Override
-    public Page<Post> listPostByPage(PostQueryRequest postQueryRequest) {
+    public Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest) {
         long current = postQueryRequest.getCurrent();
         long size = postQueryRequest.getPageSize();
         String searchText = postQueryRequest.getSearchText();
 
-        // 1. 构建查询条件
+        // 1. 构建数据库查询条件
         QueryWrapper<Post> queryWrapper = new QueryWrapper<>();
-
-        // 1.1 如果有搜索词，就查 content 包含该词
         if (StrUtil.isNotBlank(searchText)) {
             queryWrapper.like("content", searchText);
         }
-
-        // 1.2 按创建时间倒序 (新的在上面)
         queryWrapper.orderByDesc("create_time");
 
-        // 1.3 排除已逻辑删除的 (MP配置了 TableLogic 会自动处理，这里可以不写，但为了保险)
-        // queryWrapper.eq("is_delete", 0);
-
-        // 2. 执行分页查询
+        // 2. 查询数据库 (查到的是 Entity)
         Page<Post> postPage = this.page(new Page<>(current, size), queryWrapper);
 
-        return postPage;
+        // 3. 准备 VO 分页对象 (用来装最终结果)
+        Page<PostVO> postVOPage = new Page<>(postPage.getCurrent(), postPage.getSize(), postPage.getTotal());
+
+        // 4. 获取当前登录用户 (可能为空)
+        User loginUser = UserHolder.getUser();
+
+        // 5. 【核心转换】 Entity List -> VO List
+        List<PostVO> voList = postPage.getRecords().stream().map(post -> {
+            // 5.1 创建 VO 并拷贝基础属性
+            PostVO postVO = new PostVO();
+            BeanUtil.copyProperties(post, postVO);
+
+            // 5.2 处理 "是否点赞" 逻辑
+            if (loginUser != null) {
+                // 如果用户已登录，去 Redis 查 Set
+                String key = RedisConstants.POST_LIKED_KEY + post.getId();
+                Boolean isMember = stringRedisTemplate.opsForSet().isMember(key, loginUser.getId().toString());
+                postVO.setIsLiked(Boolean.TRUE.equals(isMember));
+            } else {
+                // 没登录当然是 false
+                postVO.setIsLiked(false);
+            }
+
+            return postVO;
+        }).collect(Collectors.toList());
+
+        // 6. 填充回 VO 分页对象
+        postVOPage.setRecords(voList);
+
+        return postVOPage;
+    }
+
+    /**
+     * 点赞 / 取消点赞 (核心业务)
+     */
+    @Override
+    public void likePost(Long postId) {
+        // 1. 获取当前登录用户
+        User loginUser = UserHolder.getUser();
+        if (loginUser == null) {
+            // 点赞操作必须登录
+            throw new BusinessException(ErrorCode.NOT_LOGIN);
+        }
+        Long userId = loginUser.getId();
+
+        // 2. 判断当前用户是否已经点赞
+        // Key 格式: echo:post:like:1 (1是帖子id)
+        String key = RedisConstants.POST_LIKED_KEY + postId;
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(key, userId.toString());
+
+        if (Boolean.TRUE.equals(isMember)) {
+            // 3. 如果已点赞，则是【取消点赞】
+            // 3.1 数据库点赞数 -1
+            // SQL: update tb_post set like_count = like_count - 1 where id = ?
+            boolean isSuccess = this.update()
+                    .setSql("like_count = like_count - 1")
+                    .eq("id", postId)
+                    .update();
+
+            // 3.2 如果DB更新成功，Redis 移除用户
+            if (isSuccess) {
+                stringRedisTemplate.opsForSet().remove(key, userId.toString());
+            }
+        } else {
+            // 4. 如果未点赞，则是【点赞】
+            // 4.1 数据库点赞数 +1
+            // SQL: update tb_post set like_count = like_count + 1 where id = ?
+            boolean isSuccess = this.update()
+                    .setSql("like_count = like_count + 1")
+                    .eq("id", postId)
+                    .update();
+
+            // 4.2 如果DB更新成功，Redis 添加用户
+            if (isSuccess) {
+                stringRedisTemplate.opsForSet().add(key, userId.toString());
+            }
+        }
     }
 }
 
