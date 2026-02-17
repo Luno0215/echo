@@ -1,18 +1,29 @@
 package com.luno.echo.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.CommentAddRequest;
+import com.luno.echo.model.dto.CommentQueryRequest;
 import com.luno.echo.model.entity.Comment;
 import com.luno.echo.model.entity.User;
+import com.luno.echo.model.vo.CommentVO;
 import com.luno.echo.service.CommentService;
 import com.luno.echo.mapper.CommentMapper;
 import com.luno.echo.service.PostService;
+import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
 * @author Luno
@@ -25,6 +36,9 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment>
 
     @Resource
     private PostService postService; // 注入 PostService，方便操作帖子表
+
+    @Resource
+    private UserService userService; // 注入 UserService
 
     @Transactional(rollbackFor = Exception.class)
     @Override
@@ -64,6 +78,58 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment>
         }
 
         return comment.getId();
+    }
+
+    @Override
+    public Page<CommentVO> listCommentByPage(CommentQueryRequest commentQueryRequest) {
+        long current = commentQueryRequest.getCurrent();
+        long size = commentQueryRequest.getPageSize();
+        Long postId = commentQueryRequest.getPostId();
+
+        // 1. 基础查询：查评论表
+        QueryWrapper<Comment> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq(postId != null, "post_id", postId); // 必须指定帖子ID
+        queryWrapper.orderByDesc("create_time"); // 按时间倒序（最新的在上面）
+
+        Page<Comment> commentPage = this.page(new Page<>(current, size), queryWrapper);
+
+        // 2. 转换对象：Entity -> VO
+        // 如果查不到数据，直接返回空页，防止下面报错
+        if (commentPage.getRecords().isEmpty()) {
+            return new Page<>(current, size, 0);
+        }
+
+        // 3. 【核心优化】收集所有发评人的 ID
+        Set<Long> userIds = commentPage.getRecords().stream()
+                .map(Comment::getUserId)
+                .collect(Collectors.toSet());
+
+        // 4. 【核心优化】一次性查询所有用户 (Map<UserId, User>)
+        // 这里的 listByIds 是 MyBatis-Plus 提供的批量查询
+        Map<Long, User> userMap = userService.listByIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, user -> user));
+
+        // 5. 组装 VO (填充用户信息)
+        List<CommentVO> voList = commentPage.getRecords().stream().map(comment -> {
+            CommentVO commentVO = new CommentVO();
+            BeanUtil.copyProperties(comment, commentVO);
+
+            // 从 Map 里拿用户，不用每次都查库
+            Long userId = comment.getUserId();
+            User user = userMap.get(userId);
+            if (user != null) {
+                commentVO.setUsername(user.getUsername());
+                commentVO.setNickname(user.getNickname());
+                commentVO.setAvatar(user.getAvatar());
+            }
+            return commentVO;
+        }).collect(Collectors.toList());
+
+        // 6. 返回 VO 分页
+        Page<CommentVO> resultPage = new Page<>(commentPage.getCurrent(), commentPage.getSize(), commentPage.getTotal());
+        resultPage.setRecords(voList);
+
+        return resultPage;
     }
 }
 
