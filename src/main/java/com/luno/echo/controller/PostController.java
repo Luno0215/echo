@@ -9,6 +9,7 @@ import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import jakarta.annotation.Resource;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -18,14 +19,23 @@ public class PostController {
     @Resource
     private PostService postService;
 
-    /**
-     * 发布帖子
-     */
-    @PostMapping("/add")
+
+    /*@PostMapping("/add")
     public Result<Long> addPost(@RequestBody PostAddRequest postAddRequest) {
         if (postAddRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
+        long postId = postService.addPost(postAddRequest);
+        return Result.ok(postId);
+    }*/
+
+    /**
+     * 发布帖子
+     */
+    @PostMapping("/add")
+    // @Valid: 告诉 Spring，请帮我检查 postAddRequest 里的规则
+    public Result<Long> addPost(@RequestBody @Valid PostAddRequest postAddRequest) {
+
         long postId = postService.addPost(postAddRequest);
         return Result.ok(postId);
     }

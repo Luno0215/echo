@@ -43,14 +43,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             throw new BusinessException(ErrorCode.NOT_LOGIN);
         }
 
-        // 2. 校验参数
+        // 2. 获取参数
         String content = postAddRequest.getContent();
-        if (StrUtil.isBlank(content)) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR, "内容不能为空");
-        }
-        if (content.length() > 500) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR, "内容不能超过500字");
-        }
 
         // 3. 封装 Post 对象
         Post post = new Post();
