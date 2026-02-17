@@ -156,7 +156,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         return postVOPage;
     }
 
-    @Override
+    // 点赞帖子版本 1（没用定时任务）
+    /*@Override
     public void likePost(Long postId) {
         // 1. 获取当前登录用户
         User loginUser = UserHolder.getUser();
@@ -198,6 +199,40 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
                 stringRedisTemplate.opsForSet().add(key, userId.toString());
             }
         }
+    }*/
+
+    @Override
+    public void likePost(Long postId) {
+        // 1. 获取当前登录用户
+        Long userId = UserHolder.getUser().getId();
+
+        // 2. 定义 Redis Key
+        String likeKey = "echo:post:like:" + postId;
+
+        // 3. 判断用户是否点过赞 (Redis Set 操作)
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(likeKey, userId.toString());
+
+        if (Boolean.FALSE.equals(isMember)) {
+            // --- 未点赞 -> 执行点赞 ---
+            // A. 将用户 ID 加入 Set
+            stringRedisTemplate.opsForSet().add(likeKey, userId.toString());
+            // B. 点赞数 +1 (可选，如果直接用 SCARD 算总数，这里其实不用存 count)
+            // stringRedisTemplate.opsForValue().increment("echo:post:like_count:" + postId);
+        } else {
+            // --- 已点赞 -> 执行取消点赞 ---
+            // A. 将用户 ID 从 Set 移除
+            stringRedisTemplate.opsForSet().remove(likeKey, userId.toString());
+            // B. 点赞数 -1
+            // stringRedisTemplate.opsForValue().decrement("echo:post:like_count:" + postId);
+        }
+
+        // 4. 【关键一步】将该帖子 ID 加入“脏数据集合”
+        // 告诉定时任务：“喂，这个帖子的点赞数变了，等会儿记得同步到数据库！”
+        stringRedisTemplate.opsForSet().add("echo:post:dirty_like", postId.toString());
+
+        // 5. 【清理缓存】
+        // 因为点赞数变了，详情页的缓存(PostDetailVO)也脏了，删掉它让它重建
+        stringRedisTemplate.delete("echo:post:detail:" + postId);
     }
 
     @Override
