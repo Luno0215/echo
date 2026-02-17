@@ -1,11 +1,14 @@
 package com.luno.echo.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.PostAddRequest;
+import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Post;
 import com.luno.echo.model.entity.User;
 import com.luno.echo.service.PostService;
@@ -79,6 +82,32 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         // 4. 执行删除
         return this.removeById(postId);
+    }
+
+    @Override
+    public Page<Post> listPostByPage(PostQueryRequest postQueryRequest) {
+        long current = postQueryRequest.getCurrent();
+        long size = postQueryRequest.getPageSize();
+        String searchText = postQueryRequest.getSearchText();
+
+        // 1. 构建查询条件
+        QueryWrapper<Post> queryWrapper = new QueryWrapper<>();
+
+        // 1.1 如果有搜索词，就查 content 包含该词
+        if (StrUtil.isNotBlank(searchText)) {
+            queryWrapper.like("content", searchText);
+        }
+
+        // 1.2 按创建时间倒序 (新的在上面)
+        queryWrapper.orderByDesc("create_time");
+
+        // 1.3 排除已逻辑删除的 (MP配置了 TableLogic 会自动处理，这里可以不写，但为了保险)
+        // queryWrapper.eq("is_delete", 0);
+
+        // 2. 执行分页查询
+        Page<Post> postPage = this.page(new Page<>(current, size), queryWrapper);
+
+        return postPage;
     }
 }
 

@@ -1,6 +1,8 @@
 package com.luno.echo.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.luno.echo.model.dto.PostAddRequest;
+import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Post;
 import com.baomidou.mybatisplus.extension.service.IService;
 
@@ -24,4 +26,11 @@ public interface PostService extends IService<Post> {
      * @return 是否成功
      */
     boolean deletePost(Long postId);
+
+    /**
+     * 分页查询帖子
+     * @param postQueryRequest 查询条件
+     * @return 帖子列表
+     */
+    Page<Post> listPostByPage(PostQueryRequest postQueryRequest);
 }
