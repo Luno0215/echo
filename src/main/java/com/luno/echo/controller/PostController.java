@@ -94,13 +94,6 @@ public class PostController {
     }
 
     /**
-     *
-     *
-     * @param id
-     * @return
-     */
-
-    /**
      * 获取帖子详情
      * 接口：GET /post/detail/{id}
      */
