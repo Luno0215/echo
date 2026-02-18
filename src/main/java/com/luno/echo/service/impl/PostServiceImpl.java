@@ -218,113 +218,144 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         }
     }*/
 
-    // ES搜索实现
-    private Page<PostVO> searchByEs(long current, long size, String searchText) {
-        // ------------------------------------------------------------------
-        // 第一步：定义“高亮长什么样”
-        // ------------------------------------------------------------------
-        // HighlightFieldParameters: 这是 Spring Data 定义高亮样式的配置类
+    /**
+     * 🔍 复合搜索核心方法 (ES + MySQL 双剑合璧)
+     * 流程：
+     * 1. 在 ES 中根据 关键词(高亮) 和 标签(过滤) 搜索，拿到 ID 列表。
+     * 2. 根据 ID 去 MySQL 查询完整的帖子数据。
+     * 3. 将 ES 返回的高亮文本，覆盖到 MySQL 的普通文本上。
+     */
+    private Page<PostVO> searchByEs(PostQueryRequest postQueryRequest) {
+        // 获取请求参数
+        long current = postQueryRequest.getCurrent();
+        long size = postQueryRequest.getPageSize();
+        String searchText = postQueryRequest.getSearchText();
+        String tag = postQueryRequest.getTag();
+
+        // ============================================================
+        // 第一阶段：准备高亮配置 (告诉 ES 怎么给匹配词上色)
+        // ============================================================
+
+        // 1. 构建高亮参数 (样式定义)
         HighlightFieldParameters fieldParam = HighlightFieldParameters.builder()
-                .withPreTags("<span style='color:red'>") // 高亮前缀：给匹配词套上红色样式
+                .withPreTags("<span style='color:red'>") // 高亮前缀：红字开始
                 .withPostTags("</span>")                 // 高亮后缀：标签闭合
-                .withRequireFieldMatch(false)            // false 表示：哪怕我搜的是 content，但 tag 匹配到了，tag 也要高亮
+                // requireFieldMatch(false) 的意思是：
+                // 哪怕我搜的是 content 字段匹配到了，如果 tag 字段里也有这个词，tag 也要高亮。
+                // (如果不设置 false，通常只有参与匹配的那个字段才会被高亮)
+                .withRequireFieldMatch(false)
                 .build();
 
-        // ------------------------------------------------------------------
-        // 第二步：指定“哪些字段需要高亮”
-        // ------------------------------------------------------------------
-        // 告诉 ES：我要对 'content' 字段应用上面的红色样式
+        // 2. 定义哪些字段需要高亮
         HighlightField contentField = new HighlightField("content", fieldParam);
-        // 告诉 ES：我要对 'tag' 字段也应用上面的红色样式
         HighlightField tagField = new HighlightField("tag", fieldParam);
 
-        // ------------------------------------------------------------------
-        // 第三步：打包高亮配置
-        // ------------------------------------------------------------------
-        // 把上面两个字段的配置打包进一个 Highlight 对象，准备传给查询语句
+        // 3. 封装成 Highlight 对象 (Spring Data 的包装类)
         Highlight highlight = new Highlight(Arrays.asList(contentField, tagField));
 
-        // ------------------------------------------------------------------
-        // 第四步：构建查询语句 (最复杂的部分)
-        // ------------------------------------------------------------------
-        // NativeQuery: 原生查询构建器，对应 ES 的 JSON 查询体
+        // ============================================================
+        // 第二阶段：构建查询语句 (NativeQuery 是 Spring Boot 3 的核心构建器)
+        // ============================================================
+
         NativeQuery query = NativeQuery.builder()
-                // .withQuery: 定义怎么查
-                .withQuery(q -> q.bool(b -> b // bool 查询：复合查询的容器
-                        // .should: 相当于 SQL 里的 OR
-                        // 逻辑：内容(content)包含关键词 OR 标签(tag)包含关键词
-                        .should(s -> s.match(m -> m.field("content").query(searchText)))
-                        .should(s -> s.match(m -> m.field("tag").query(searchText)))
-                ))
-                // .withPageable: 定义分页 (注意：ES 页码从 0 开始，MP 从 1 开始，所以要 -1)
+                // .withQuery 定义核心查询逻辑 (使用 lambda 表达式构建 bool 查询)
+                .withQuery(q -> q.bool(b -> {
+
+                    // A. 处理搜索词 (全文检索，计算相关度分数)
+                    // 逻辑：如果传了 searchText，则必须 (must) 满足：内容包含 OR 标签包含
+                    if (StrUtil.isNotBlank(searchText)) {
+                        b.must(m -> m.bool(sub -> sub
+                                // should 相当于 SQL 中的 OR
+                                // 只要 content 或 tag 其中一个字段包含 searchText 即可
+                                .should(s -> s.match(ma -> ma.field("content").query(searchText)))
+                                .should(s -> s.match(ma -> ma.field("tag").query(searchText)))
+                        ));
+                    }
+
+                    // B. 处理标签过滤 (精确匹配，不计算分数)
+                    // 逻辑：如果传了 tag，则必须过滤 (filter) 出该标签的数据
+                    // 💡 知识点：filter 比 must 性能更好，因为它不涉及评分算法，且结果会被缓存。
+                    if (StrUtil.isNotBlank(tag)) {
+                        b.filter(f -> f.term(t -> t.field("tag").value(tag)));
+                    }
+
+                    return b;
+                }))
+                // 设置分页 (注意：ES 页码从 0 开始，而前端传的 current 通常从 1 开始，所以要减 1)
                 .withPageable(PageRequest.of((int) (current - 1), (int) size))
-                // .withHighlightQuery: 把刚才打包好的高亮配置塞进去
+                // 注入刚才定义的高亮配置
                 .withHighlightQuery(new HighlightQuery(highlight, PostEsDTO.class))
                 .build();
 
-        // ------------------------------------------------------------------
-        // 第五步：发射请求！
-        // ------------------------------------------------------------------
-        // 这一步真正向 ES 发送了网络请求，拿回结果
+        // ============================================================
+        // 第三阶段：执行搜索 & 解析结果 (ES -> ID List)
+        // ============================================================
+
+        // 4. 发送请求给 ES
         SearchHits<PostEsDTO> searchHits = elasticsearchOperations.search(query, PostEsDTO.class);
 
-        // 如果没搜到东西，直接返回空页，省得后面报错
+        // 5. 如果没查到数据，直接返回空页，避免后续空指针或无效查询
         if (!searchHits.hasSearchHits()) {
             return new Page<>(current, size, 0);
         }
 
-        // ------------------------------------------------------------------
-        // 第六步：处理搜索结果 (提取 ID 和 高亮片段)
-        // ------------------------------------------------------------------
-        List<Long> postIds = new ArrayList<>();
-        Map<Long, String> highlightMap = new HashMap<>();
+        // 6. 准备容器
+        List<Long> postIds = new ArrayList<>(); // 存 ID，用于回表查 MySQL
+        Map<Long, String> contentHighlightMap = new HashMap<>(); // 存内容的高亮片段
+        Map<Long, String> tagHighlightMap = new HashMap<>();     // 存标签的高亮片段
 
-        // 遍历每一个“命中”的结果 (Hit)
+        // 7. 遍历 ES 返回的每一个“命中”(Hit)对象
         for (SearchHit<PostEsDTO> hit : searchHits) {
-            // 1. 拿 ID：这是我们回 MySQL 查数据的关键
             Long id = hit.getContent().getId();
             postIds.add(id);
 
-            // 2. 拿高亮：ES 返回的高亮片段是单独放在 highlightFields 里的
-            // 如果 content 字段有高亮内容，取出来存进 Map
-            List<String> highlights = hit.getHighlightField("content");
-            if (CollUtil.isNotEmpty(highlights)) {
-                // highlights.get(0) 就是那段带 <span color='red'> 的文本
-                highlightMap.put(id, highlights.get(0));
+            // 提取 content 字段的高亮 (结果是一个 List，通常取第 0 个片段即可)
+            List<String> contentHighlights = hit.getHighlightField("content");
+            if (CollUtil.isNotEmpty(contentHighlights)) {
+                // 放入 Map，Key 是帖子 ID，Value 是带 <span...> 的高亮文本
+                contentHighlightMap.put(id, contentHighlights.get(0));
+            }
+
+            // 提取 tag 字段的高亮
+            List<String> tagHighlights = hit.getHighlightField("tag");
+            if (CollUtil.isNotEmpty(tagHighlights)) {
+                tagHighlightMap.put(id, tagHighlights.get(0));
             }
         }
 
-        // ------------------------------------------------------------------
-        // 第七步：回表查询 (MySQL)
-        // ------------------------------------------------------------------
-        // 为什么要回表？因为 ES 里的数据可能不是最新的(比如作者刚换了头像)，且为了复用转 VO 的逻辑
+        // ============================================================
+        // 第四阶段：回表查询 & 组装最终结果 (MySQL + Redis + ES Merge)
+        // ============================================================
+
+        // 8. 根据 ID 列表去 MySQL 查询完整数据
+        // 为什么要回表？因为 ES 为了性能通常只存索引字段，最新的头像、昵称、实时点赞数最好查 DB/Redis
         List<Post> postList = this.listByIds(postIds);
+
+        // 防御性判断：万一 ES 有 ID，但 MySQL 删了，这里要判空
         if (CollUtil.isEmpty(postList)) {
             return new Page<>(current, size, 0);
         }
 
-        // ------------------------------------------------------------------
-        // 第八步：内存排序 (关键！)
-        // ------------------------------------------------------------------
-        // MySQL 的 listByIds 返回顺序是不定的，但 ES 返回的顺序是按“相关度”排好的
-        // 我们必须强行把 MySQL 的结果，按照 ES 返回 ID 的顺序重新排列
+        // 9. 【关键】内存排序
+        // MySQL 的 listByIds 返回顺序是乱的(或按主键排)，但 ES 返回的 ID 是按“相关度”排好序的。
+        // 我们必须把 postList 重新排序，让它和 postIds 的顺序保持一致，否则搜索结果的相关性就乱了。
         postList.sort(Comparator.comparingInt(p -> postIds.indexOf(p.getId())));
 
-        // ------------------------------------------------------------------
-        // 第九步：组装最终数据
-        // ------------------------------------------------------------------
-        // 构建分页对象
+        // 10. 构建 MyBatis-Plus 的分页对象
         Page<Post> postPage = new Page<>(current, size, searchHits.getTotalHits());
         postPage.setRecords(postList);
 
-        // 转成前端需要的 VO (带头像、昵称等)
+        // 11. 转换为 VO 对象 (这一步会填充头像、昵称、Redis里的点赞数)
         Page<PostVO> voPage = getPostVOPage(postPage);
 
-        // 🌟 最后一步：注入高亮
-        // 遍历 VO，如果这个帖子 ID 在 Map 里有高亮文本，就覆盖掉原来的普通文本
+        // 12. 【注入高亮】画龙点睛
+        // 遍历最终结果，检查 Map 里有没有该 ID 的高亮文本。如果有，覆盖掉普通的文本。
         for (PostVO vo : voPage.getRecords()) {
-            String highContent = highlightMap.get(vo.getId());
+            String highContent = contentHighlightMap.get(vo.getId());
             if (highContent != null) vo.setContent(highContent);
+
+            String highTag = tagHighlightMap.get(vo.getId());
+            if (highTag != null) vo.setTag(highTag);
         }
 
         return voPage;
@@ -341,7 +372,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         // ============================================================
         // 只要 searchText 不为空，就认为用户在搜索，必须用 ES 才能支持分词和高亮
         if (StrUtil.isNotBlank(searchText)) {
-            return searchByEs(current, size, searchText);
+            return searchByEs(postQueryRequest);
         }
 
         // ============================================================
