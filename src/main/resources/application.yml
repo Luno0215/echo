@@ -26,6 +26,9 @@ spring:
           max-wait: -1ms
           max-idle: 8
           min-idle: 0
+  # Elasticsearch
+  elasticsearch:
+    uris: http://localhost:9200
 # MP log
 mybatis-plus:
   configuration:
