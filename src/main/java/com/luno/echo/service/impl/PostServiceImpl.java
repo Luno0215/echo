@@ -29,6 +29,7 @@ import com.luno.echo.service.PostService;
 import com.luno.echo.mapper.PostMapper;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
@@ -53,6 +54,7 @@ import static com.luno.echo.common.constant.RedisConstants.*;
 * @createDate 2026-02-16 16:25:23
 */
 @Service
+@Slf4j
 public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     implements PostService{
 
@@ -65,8 +67,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     @Resource
     private CommentMapper commentMapper; // 假设你有这个 Mapper
 
+    // 注入 ES 的 Repository
     @Resource
     private PostEsRepository postEsRepository;
+
+    // 注入ES的工具类
+    @Resource
+    private EsSearchUtil esSearchUtil;
 
     // 注入 ES 模板
     @Resource
@@ -93,9 +100,22 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         post.setCommentCount(0);
 
         // 4. 插入数据库 (createTime 会自动填充)
+        // 【核心】先存 MySQL (这是主库，必须先成功)
         boolean result = this.save(post);
         if (!result) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "系统故障，发布失败");
+        }
+
+        // 3. 【核心】再同步到 ES
+        // 注意：这里可能会抛异常（比如 ES 挂了），要考虑是用 try-catch 包住不影响主业务，还是让它抛出。
+        // 初级阶段建议：直接同步，挂了就报错。
+        try {
+            PostEsDTO postEsDTO = BeanUtil.copyProperties(post, PostEsDTO.class);
+            postEsRepository.save(postEsDTO); // 使用 Repository 保存最方便
+            log.info("ES 新增一条帖子: {}", postEsDTO);
+        } catch (Exception e) {
+            log.error("Post sync to ES failed, postId: {}", post.getId(), e);
+            // 视业务情况决定是否回滚 MySQL，或者记录日志后续人工补偿
         }
 
         // 5. 返回帖子 ID
@@ -125,10 +145,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         // 4. 执行删除
         return this.removeById(postId);
     }
-
-    // 注入ES的工具类
-    @Resource
-    private EsSearchUtil esSearchUtil;
 
     // 分页查询帖子普通版
     /*@Override
