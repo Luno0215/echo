@@ -20,7 +20,7 @@ public class PostQueryRequest implements Serializable {
     /**
      * 搜索关键词 (可选)
      */
-    private String searchText;
+    private String content;
 
     /**
      * 按标签筛选 (可选)

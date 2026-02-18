@@ -11,12 +11,14 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
+import com.luno.echo.common.utils.EsSearchUtil;
 import com.luno.echo.mapper.CommentMapper;
 import com.luno.echo.model.dto.PostAddRequest;
 import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Comment;
 import com.luno.echo.model.entity.Post;
 import com.luno.echo.model.entity.User;
+import com.luno.echo.model.es.EsSearchResult;
 import com.luno.echo.model.es.PostEsDTO;
 import com.luno.echo.model.es.repository.PostEsRepository;
 import com.luno.echo.model.vo.PostCommentVO;
@@ -124,6 +126,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         return this.removeById(postId);
     }
 
+    // 注入ES的工具类
+    @Resource
+    private EsSearchUtil esSearchUtil;
+
     // 分页查询帖子普通版
     /*@Override
     public Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest) {
@@ -218,14 +224,15 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         }
     }*/
 
-    /**
-     * 🔍 复合搜索核心方法 (ES + MySQL 双剑合璧)
+/*
+    *
+     * 复合搜索核心方法 (ES + MySQL 双剑合璧)
      * 流程：
      * 1. 在 ES 中根据 关键词(高亮) 和 标签(过滤) 搜索，拿到 ID 列表。
      * 2. 根据 ID 去 MySQL 查询完整的帖子数据。
      * 3. 将 ES 返回的高亮文本，覆盖到 MySQL 的普通文本上。
-     */
-    private Page<PostVO> searchByEs(PostQueryRequest postQueryRequest) {
+*/
+    /*private Page<PostVO> searchByEs(PostQueryRequest postQueryRequest) {
         // 获取请求参数
         long current = postQueryRequest.getCurrent();
         long size = postQueryRequest.getPageSize();
@@ -359,42 +366,135 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         }
 
         return voPage;
+    }*/
+
+    /**
+     * 🔍 使用工具类实现的 ES 搜索逻辑
+     * 特性：只全文检索 content，精确筛选 tag，自动处理高亮和分页
+     */
+    private Page<PostVO> searchByEs(PostQueryRequest postQueryRequest) {
+        // ============================================================
+        // 1. 准备搜索参数
+        // ============================================================
+
+        // A. 定义要进行 "全文检索" (分词+高亮) 的字段
+        // 你的需求：只搜 content，不搜 tag (tag用来做过滤)
+        List<String> searchFields = Arrays.asList("content");
+
+        // B. 定义 "精确过滤" 的条件
+        // 你的需求：如果前端传了 tag，必须精确匹配该 tag
+        Map<String, String> filterMap = new HashMap<>();
+        if (StrUtil.isNotBlank(postQueryRequest.getTag())) {
+            filterMap.put("tag", postQueryRequest.getTag());
+        }
+
+        // ============================================================
+        // 2. 调用工具类 (核心一步)
+        // ============================================================
+        // 一行代码代替了之前几十行的 Builder 构建逻辑
+        EsSearchResult result = esSearchUtil.search(
+                postQueryRequest.getContent(),       // 搜索关键词
+                (int) postQueryRequest.getCurrent(), // 当前页
+                (int) postQueryRequest.getPageSize(),// 页大小
+                PostEsDTO.class,                     // 搜哪个索引实体
+                searchFields,                        // 搜哪些列 (content)
+                filterMap                            // 过滤哪些列 (tag)
+        );
+
+        // ============================================================
+        // 3. 处理空结果
+        // ============================================================
+        // 如果 ES 没搜到 ID，直接返回空页，不需要再去查数据库了
+        if (CollUtil.isEmpty(result.getIds())) {
+            return new Page<>(postQueryRequest.getCurrent(), postQueryRequest.getPageSize(), 0);
+        }
+
+        // ============================================================
+        // 4. 回表查询 (MySQL)
+        // ============================================================
+        // 拿着 ES 给的 ID 列表，去 MySQL 查最新的完整数据 (头像、昵称、实时状态)
+        List<Post> postList = this.listByIds(result.getIds());
+
+        // 防御性判断：万一 ES 有数据，但 MySQL 刚好删了，导致 list 为空
+        if (CollUtil.isEmpty(postList)) {
+            return new Page<>(postQueryRequest.getCurrent(), postQueryRequest.getPageSize(), 0);
+        }
+
+        // ============================================================
+        // 5. 内存排序 (关键)
+        // ============================================================
+        // MySQL listByIds 返回的顺序通常是乱的。
+        // 我们必须按 ES 返回的 ID 顺序 (result.getIds()) 重新排队，否则搜索结果的“相关度”就失效了。
+        postList.sort(Comparator.comparingInt(p -> result.getIds().indexOf(p.getId())));
+
+        // ============================================================
+        // 6. 转换为 VO (填充用户信息、点赞数)
+        // ============================================================
+        // 构建 MP 的分页对象
+        Page<Post> postPage = new Page<>(postQueryRequest.getCurrent(), postQueryRequest.getPageSize(), result.getTotal());
+        postPage.setRecords(postList);
+
+        // 调用你现有的通用转换方法 (这一步会处理头像、昵称、Redis点赞数修正)
+        Page<PostVO> voPage = getPostVOPage(postPage);
+
+        // ============================================================
+        // 7. 注入高亮 (画龙点睛)
+        // ============================================================
+        // 从工具类的结果中拿出高亮 Map
+        Map<Long, Map<String, String>> highMap = result.getHighlightMap();
+
+        for (PostVO vo : voPage.getRecords()) {
+            // 获取当前帖子的高亮数据
+            Map<String, String> fieldMap = highMap.get(vo.getId());
+
+            if (fieldMap != null) {
+                // 如果 content 字段有高亮文本 (带红字的)，就覆盖掉 VO 里的普通文本
+                String highContent = fieldMap.get("content");
+                if (StrUtil.isNotBlank(highContent)) {
+                    vo.setContent(highContent);
+                }
+                // 注意：因为我们只搜了 content，所以只有 content 会有高亮，tag 不会有
+            }
+        }
+
+        return voPage;
     }
 
     @Override
     public Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest) {
         long current = postQueryRequest.getCurrent();
         long size = postQueryRequest.getPageSize();
-        String searchText = postQueryRequest.getSearchText();
+
+        // 获取新参数名 content
+        String content = postQueryRequest.getContent();
 
         // ============================================================
-        // 场景一：用户在搜索框输入了字 -> 走 ES
+        // 场景一：如果用户输入了内容 -> 走 ES 搜索 (带高亮)
         // ============================================================
-        // 只要 searchText 不为空，就认为用户在搜索，必须用 ES 才能支持分词和高亮
-        if (StrUtil.isNotBlank(searchText)) {
+        if (StrUtil.isNotBlank(content)) {
+            // 只要搜内容，就必须用 ES
             return searchByEs(postQueryRequest);
         }
 
         // ============================================================
-        // 场景二：用户只是在刷首页 -> 走 MySQL
+        // 场景二：没有搜内容 (只是刷列表 OR 只选了标签) -> 走 MySQL
         // ============================================================
-        // 没有搜索词，直接查数据库，性能最稳
 
-        // 1. MP 的查询包装器
+        // 1. 构建 MP 查询条件
         LambdaQueryWrapper<Post> queryWrapper = new LambdaQueryWrapper<>();
 
-        // 如果有点“标签”筛选 (比如点“树洞”分类)，这里加个 where tag = ?
+        // 处理标签筛选 (精确匹配)
         if (StrUtil.isNotBlank(postQueryRequest.getTag())) {
             queryWrapper.eq(Post::getTag, postQueryRequest.getTag());
         }
 
-        // 按创建时间倒序 (新的在上面)
+        // 按时间倒序 (新帖在前)
         queryWrapper.orderByDesc(Post::getCreateTime);
 
-        // 2. 执行数据库分页查询
+        // 2. 查数据库
         Page<Post> postPage = this.page(new Page<>(current, size), queryWrapper);
 
-        // 3. 转成 VO 返回
+        // 3. 转 VO 返回 (含头像填充、点赞修正等逻辑)
         return getPostVOPage(postPage);
     }
 
