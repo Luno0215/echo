@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
+import com.luno.echo.common.constant.MqConstant;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.common.utils.EsSearchUtil;
 import com.luno.echo.mapper.CommentMapper;
@@ -30,15 +31,8 @@ import com.luno.echo.mapper.PostMapper;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.elasticsearch.client.elc.NativeQuery;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
-import org.springframework.data.elasticsearch.core.SearchHit;
-import org.springframework.data.elasticsearch.core.SearchHits;
-import org.springframework.data.elasticsearch.core.query.HighlightQuery;
-import org.springframework.data.elasticsearch.core.query.highlight.Highlight;
-import org.springframework.data.elasticsearch.core.query.highlight.HighlightField;
-import org.springframework.data.elasticsearch.core.query.highlight.HighlightFieldParameters;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -79,7 +73,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     @Resource
     private ElasticsearchOperations elasticsearchOperations;
 
-    @Override
+    // 注入 MQ 操作类
+    @Resource
+    private RabbitTemplate rabbitTemplate;
+
+    // 简单实现同步双写模式
+    /*@Override
     public long addPost(PostAddRequest postAddRequest) {
         // 1. 获取当前登录用户 (从拦截器存的 ThreadLocal 里拿)
         User loginUser = UserHolder.getUser();
@@ -120,9 +119,54 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         // 5. 返回帖子 ID
         return post.getId();
+    }*/
+
+    /**
+     * RabbitMQ 实现发布帖子的同步双写：数据库和ES
+     * @param postAddRequest 帖子信息
+     * @return
+     */
+    @Override
+    public long addPost(PostAddRequest postAddRequest) {
+        // 1. 获取当前登录用户 (从拦截器存的 ThreadLocal 里拿)
+        User loginUser = UserHolder.getUser();
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN);
+        }
+
+        // 2. 获取参数
+        String content = postAddRequest.getContent();
+
+        // 3. 封装 Post 对象
+        Post post = new Post();
+        post.setUserId(loginUser.getId()); // 关键：绑定当前用户
+        post.setContent(content);
+        // 如果前端没传 tag，给个默认值
+        post.setTag(StrUtil.isBlank(postAddRequest.getTag()) ? "心情" : postAddRequest.getTag());
+        post.setLikeCount(0);
+        post.setCommentCount(0);
+
+        // 4. 插入数据库 (createTime 会自动填充)
+        // 【核心】先存 MySQL (这是主库，必须先成功)
+        boolean result = this.save(post);
+        if (!result) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "系统故障，发布失败");
+        }
+
+        // 5. 【核心修改】发送消息给 MQ
+        // 我们只需要发一个 ID 过去，消费者拿着 ID 去查库就行 (查库为了保证数据最新)
+        rabbitTemplate.convertAndSend(
+                MqConstant.POST_EXCHANGE,
+                MqConstant.POST_INSERT_KEY,
+                post.getId()
+        );
+
+        // 5. 返回帖子 ID
+        return post.getId();
     }
 
-    @Override
+    // 简单实现同步双删模式
+    /*@Override
     public boolean deletePost(Long postId) {
         // 1. 获取当前用户
         User loginUser = UserHolder.getUser();
@@ -155,6 +199,47 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         } catch (Exception e) {
             log.error("Delete ES post failed, postId: {}", postId, e);
         }
+
+        return true;
+    }*/
+
+    /**
+     * RabbitMQ 实现删除帖子的同步双删
+     * @param postId 帖子 ID
+     * @return
+     */
+    @Override
+    public boolean deletePost(Long postId) {
+        // 1. 获取当前用户
+        User loginUser = UserHolder.getUser();
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN);
+        }
+
+        // 2. 查询帖子是否存在
+        Post post = this.getById(postId);
+        if (post == null) {
+            throw new BusinessException(ErrorCode.NULL_ERROR, "帖子不存在");
+        }
+
+        // 3. 【核心权限校验】只能删除自己的帖子
+        // 注意：Long 类型比较要用 equals，不能用 ==
+        if (!post.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH, "你无权删除他人的树洞");
+        }
+
+        // 4. 【核心】先删 MySQL
+        boolean result = this.removeById(postId);
+        if (!result) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        // 5.【核心修改】发消息通知删除
+        rabbitTemplate.convertAndSend(
+                MqConstant.POST_EXCHANGE,
+                MqConstant.POST_DELETE_KEY,
+                postId
+        );
 
         return true;
     }

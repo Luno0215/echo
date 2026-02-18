@@ -26,6 +26,22 @@ spring:
           max-wait: -1ms
           max-idle: 8
           min-idle: 0
+  # RabbitMQ
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: root
+    password: # your password
+    # 开启消息确认机制 (建议开启，保证消息不丢)
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    # 【新增】消费者监听配置
+    listener:
+      simple:
+        # 开启手动签收模式 (关键！)
+        acknowledge-mode: manual
+        # 每次只拉取一条消息，防止积压 (可选，建议加)
+        prefetch: 1
   # Elasticsearch
   elasticsearch:
     uris: http://localhost:9200
