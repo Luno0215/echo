@@ -11,10 +11,12 @@ import com.luno.echo.model.vo.PostVO;
 import com.luno.echo.service.PostService;
 import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/post")
+@Slf4j
 public class PostController {
 
     @Resource
@@ -105,4 +107,21 @@ public class PostController {
         return Result.ok(postService.getPostDetail(id));
     }
 
+    /**
+     * 同步所有帖子到 ES （管理员权限才能请求）
+     * 接口：GET /post//sync/all
+     */
+    @PostMapping("/sync/all")
+    public Result<Integer> syncAll() {
+        // ... (省略权限校验)
+
+        long start = System.currentTimeMillis();
+        int count = postService.syncAllToEs();
+        long end = System.currentTimeMillis();
+
+        log.info("同步成功，共 {} 条，耗时 {} ms", count, (end - start));
+
+        // 修正：直接返回 Integer 类型的 count
+        return Result.ok(count);
+    }
 }

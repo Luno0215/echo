@@ -843,6 +843,39 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         return vo;
     }
+
+    @Override
+    public int syncAllToEs() {
+        // 1. 查询所有数据 (注意：如果数据量是百万级，这里必须用分页循环查，不能一次 selectList(null))
+        // 假设目前数据量不大，直接查全部。如果是海量数据，建议用 MyBatis 的 Cursor 或者分页查询。
+        List<Post> postList = this.list();
+
+        if (CollUtil.isEmpty(postList)) {
+            return 0;
+        }
+
+        // 2. 转换对象
+        List<PostEsDTO> esDTOList = postList.stream().map(post -> {
+            PostEsDTO dto = new PostEsDTO();
+            BeanUtil.copyProperties(post, dto);
+            return dto;
+        }).collect(Collectors.toList());
+
+        // 3. 批量写入 ES (saveAll 是批量操作，性能比循环 save 高很多)
+        // 这一步会覆盖 ES 里已有的同 ID 数据，所以是幂等的，很安全
+        Iterable<PostEsDTO> result = postEsRepository.saveAll(esDTOList);
+
+        // 4. 计算成功条数
+        int successCount = 0;
+        if (result != null) {
+            for (PostEsDTO item : result) {
+                successCount++;
+            }
+        }
+
+        log.info("全量同步完成，MySQL总数: {}, ES写入数: {}", postList.size(), successCount);
+        return successCount;
+    }
 }
 
 

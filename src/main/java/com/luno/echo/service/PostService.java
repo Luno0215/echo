@@ -46,4 +46,10 @@ public interface PostService extends IService<Post> {
      * @return 帖子详情VO
      */
     PostDetailVO getPostDetail(Long id);
+
+    /**
+     * 从 MySQL 全量同步数据到 ES
+     * @return 同步成功的条数
+     */
+    int syncAllToEs();
 }
