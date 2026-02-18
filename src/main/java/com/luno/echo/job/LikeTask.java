@@ -13,6 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import static com.luno.echo.common.constant.RedisConstants.POST_LIKED_KEY;
+import static com.luno.echo.common.constant.RedisConstants.POST_LIKE_DIRTY_KEY;
+
 @Component
 @Slf4j
 public class LikeTask {
@@ -30,7 +33,7 @@ public class LikeTask {
         log.info("开始执行点赞数同步任务...");
 
         // 1. 从 Redis 获取所有“脏”帖子 ID
-        String dirtyKey = "echo:post:dirty_like";
+        String dirtyKey = POST_LIKE_DIRTY_KEY;
         Set<String> dirtyPostIds = stringRedisTemplate.opsForSet().members(dirtyKey);
 
         if (CollUtil.isEmpty(dirtyPostIds)) {
@@ -44,7 +47,7 @@ public class LikeTask {
             Long postId = Long.valueOf(postIdStr);
             
             // 2.1 获取 Redis 里实时的真实点赞数 (SCARD)
-            String likeKey = "echo:post:like:" + postId;
+            String likeKey = POST_LIKED_KEY + postId;
             Long realLikeCount = stringRedisTemplate.opsForSet().size(likeKey);
             
             // 2.2 准备更新对象
