@@ -4,12 +4,12 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
 import com.luno.echo.common.UserHolder;
-import com.luno.echo.common.constant.RedisConstants;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.mapper.CommentMapper;
 import com.luno.echo.model.dto.PostAddRequest;
@@ -17,6 +17,8 @@ import com.luno.echo.model.dto.PostQueryRequest;
 import com.luno.echo.model.entity.Comment;
 import com.luno.echo.model.entity.Post;
 import com.luno.echo.model.entity.User;
+import com.luno.echo.model.es.PostEsDTO;
+import com.luno.echo.model.es.repository.PostEsRepository;
 import com.luno.echo.model.vo.PostCommentVO;
 import com.luno.echo.model.vo.PostDetailVO;
 import com.luno.echo.model.vo.PostUserVO;
@@ -25,13 +27,19 @@ import com.luno.echo.service.PostService;
 import com.luno.echo.mapper.PostMapper;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.SearchHit;
+import org.springframework.data.elasticsearch.core.SearchHits;
+import org.springframework.data.elasticsearch.core.query.HighlightQuery;
+import org.springframework.data.elasticsearch.core.query.highlight.Highlight;
+import org.springframework.data.elasticsearch.core.query.highlight.HighlightField;
+import org.springframework.data.elasticsearch.core.query.highlight.HighlightFieldParameters;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -55,6 +63,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
     @Resource
     private CommentMapper commentMapper; // 假设你有这个 Mapper
 
+    @Resource
+    private PostEsRepository postEsRepository;
+
+    // 注入 ES 模板
+    @Resource
+    private ElasticsearchOperations elasticsearchOperations;
 
     @Override
     public long addPost(PostAddRequest postAddRequest) {
@@ -110,7 +124,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         return this.removeById(postId);
     }
 
-    @Override
+    // 分页查询帖子普通版
+    /*@Override
     public Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest) {
         long current = postQueryRequest.getCurrent();
         long size = postQueryRequest.getPageSize();
@@ -156,7 +171,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         postVOPage.setRecords(voList);
 
         return postVOPage;
-    }
+    }*/
 
     // 点赞帖子版本 1（没用定时任务）
     /*@Override
@@ -202,6 +217,238 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             }
         }
     }*/
+
+    // ES搜索实现
+    private Page<PostVO> searchByEs(long current, long size, String searchText) {
+        // ------------------------------------------------------------------
+        // 第一步：定义“高亮长什么样”
+        // ------------------------------------------------------------------
+        // HighlightFieldParameters: 这是 Spring Data 定义高亮样式的配置类
+        HighlightFieldParameters fieldParam = HighlightFieldParameters.builder()
+                .withPreTags("<span style='color:red'>") // 高亮前缀：给匹配词套上红色样式
+                .withPostTags("</span>")                 // 高亮后缀：标签闭合
+                .withRequireFieldMatch(false)            // false 表示：哪怕我搜的是 content，但 tag 匹配到了，tag 也要高亮
+                .build();
+
+        // ------------------------------------------------------------------
+        // 第二步：指定“哪些字段需要高亮”
+        // ------------------------------------------------------------------
+        // 告诉 ES：我要对 'content' 字段应用上面的红色样式
+        HighlightField contentField = new HighlightField("content", fieldParam);
+        // 告诉 ES：我要对 'tag' 字段也应用上面的红色样式
+        HighlightField tagField = new HighlightField("tag", fieldParam);
+
+        // ------------------------------------------------------------------
+        // 第三步：打包高亮配置
+        // ------------------------------------------------------------------
+        // 把上面两个字段的配置打包进一个 Highlight 对象，准备传给查询语句
+        Highlight highlight = new Highlight(Arrays.asList(contentField, tagField));
+
+        // ------------------------------------------------------------------
+        // 第四步：构建查询语句 (最复杂的部分)
+        // ------------------------------------------------------------------
+        // NativeQuery: 原生查询构建器，对应 ES 的 JSON 查询体
+        NativeQuery query = NativeQuery.builder()
+                // .withQuery: 定义怎么查
+                .withQuery(q -> q.bool(b -> b // bool 查询：复合查询的容器
+                        // .should: 相当于 SQL 里的 OR
+                        // 逻辑：内容(content)包含关键词 OR 标签(tag)包含关键词
+                        .should(s -> s.match(m -> m.field("content").query(searchText)))
+                        .should(s -> s.match(m -> m.field("tag").query(searchText)))
+                ))
+                // .withPageable: 定义分页 (注意：ES 页码从 0 开始，MP 从 1 开始，所以要 -1)
+                .withPageable(PageRequest.of((int) (current - 1), (int) size))
+                // .withHighlightQuery: 把刚才打包好的高亮配置塞进去
+                .withHighlightQuery(new HighlightQuery(highlight, PostEsDTO.class))
+                .build();
+
+        // ------------------------------------------------------------------
+        // 第五步：发射请求！
+        // ------------------------------------------------------------------
+        // 这一步真正向 ES 发送了网络请求，拿回结果
+        SearchHits<PostEsDTO> searchHits = elasticsearchOperations.search(query, PostEsDTO.class);
+
+        // 如果没搜到东西，直接返回空页，省得后面报错
+        if (!searchHits.hasSearchHits()) {
+            return new Page<>(current, size, 0);
+        }
+
+        // ------------------------------------------------------------------
+        // 第六步：处理搜索结果 (提取 ID 和 高亮片段)
+        // ------------------------------------------------------------------
+        List<Long> postIds = new ArrayList<>();
+        Map<Long, String> highlightMap = new HashMap<>();
+
+        // 遍历每一个“命中”的结果 (Hit)
+        for (SearchHit<PostEsDTO> hit : searchHits) {
+            // 1. 拿 ID：这是我们回 MySQL 查数据的关键
+            Long id = hit.getContent().getId();
+            postIds.add(id);
+
+            // 2. 拿高亮：ES 返回的高亮片段是单独放在 highlightFields 里的
+            // 如果 content 字段有高亮内容，取出来存进 Map
+            List<String> highlights = hit.getHighlightField("content");
+            if (CollUtil.isNotEmpty(highlights)) {
+                // highlights.get(0) 就是那段带 <span color='red'> 的文本
+                highlightMap.put(id, highlights.get(0));
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 第七步：回表查询 (MySQL)
+        // ------------------------------------------------------------------
+        // 为什么要回表？因为 ES 里的数据可能不是最新的(比如作者刚换了头像)，且为了复用转 VO 的逻辑
+        List<Post> postList = this.listByIds(postIds);
+        if (CollUtil.isEmpty(postList)) {
+            return new Page<>(current, size, 0);
+        }
+
+        // ------------------------------------------------------------------
+        // 第八步：内存排序 (关键！)
+        // ------------------------------------------------------------------
+        // MySQL 的 listByIds 返回顺序是不定的，但 ES 返回的顺序是按“相关度”排好的
+        // 我们必须强行把 MySQL 的结果，按照 ES 返回 ID 的顺序重新排列
+        postList.sort(Comparator.comparingInt(p -> postIds.indexOf(p.getId())));
+
+        // ------------------------------------------------------------------
+        // 第九步：组装最终数据
+        // ------------------------------------------------------------------
+        // 构建分页对象
+        Page<Post> postPage = new Page<>(current, size, searchHits.getTotalHits());
+        postPage.setRecords(postList);
+
+        // 转成前端需要的 VO (带头像、昵称等)
+        Page<PostVO> voPage = getPostVOPage(postPage);
+
+        // 🌟 最后一步：注入高亮
+        // 遍历 VO，如果这个帖子 ID 在 Map 里有高亮文本，就覆盖掉原来的普通文本
+        for (PostVO vo : voPage.getRecords()) {
+            String highContent = highlightMap.get(vo.getId());
+            if (highContent != null) vo.setContent(highContent);
+        }
+
+        return voPage;
+    }
+
+    @Override
+    public Page<PostVO> listPostByPage(PostQueryRequest postQueryRequest) {
+        long current = postQueryRequest.getCurrent();
+        long size = postQueryRequest.getPageSize();
+        String searchText = postQueryRequest.getSearchText();
+
+        // ============================================================
+        // 场景一：用户在搜索框输入了字 -> 走 ES
+        // ============================================================
+        // 只要 searchText 不为空，就认为用户在搜索，必须用 ES 才能支持分词和高亮
+        if (StrUtil.isNotBlank(searchText)) {
+            return searchByEs(current, size, searchText);
+        }
+
+        // ============================================================
+        // 场景二：用户只是在刷首页 -> 走 MySQL
+        // ============================================================
+        // 没有搜索词，直接查数据库，性能最稳
+
+        // 1. MP 的查询包装器
+        LambdaQueryWrapper<Post> queryWrapper = new LambdaQueryWrapper<>();
+
+        // 如果有点“标签”筛选 (比如点“树洞”分类)，这里加个 where tag = ?
+        if (StrUtil.isNotBlank(postQueryRequest.getTag())) {
+            queryWrapper.eq(Post::getTag, postQueryRequest.getTag());
+        }
+
+        // 按创建时间倒序 (新的在上面)
+        queryWrapper.orderByDesc(Post::getCreateTime);
+
+        // 2. 执行数据库分页查询
+        Page<Post> postPage = this.page(new Page<>(current, size), queryWrapper);
+
+        // 3. 转成 VO 返回
+        return getPostVOPage(postPage);
+    }
+
+    /**
+     * 🛠️ [通用方法] Post (数据库实体) -> PostVO (前端视图)
+     * 这是一个非常经典的 "Entity 转 VO" 模板方法
+     */
+    private Page<PostVO> getPostVOPage(Page<Post> postPage) {
+        List<Post> posts = postPage.getRecords();
+        Page<PostVO> voPage = new Page<>(postPage.getCurrent(), postPage.getSize(), postPage.getTotal());
+
+        // 防御性编程：如果是空列表，直接返回，别往下走了
+        if (CollUtil.isEmpty(posts)) {
+            voPage.setRecords(new ArrayList<>());
+            return voPage;
+        }
+
+        // =================================================
+        // 1. 批量查询用户信息 (性能优化核心！)
+        // =================================================
+        // ❌ 错误做法：在下面的循环里一个一个查 User，会导致查 10 个帖子要读 10 次库 (N+1 问题)
+        // ✅ 正确做法：
+        //    a. 先把这页帖子的所有作者 ID 收集起来 -> [101, 102, 101]
+        Set<Long> userIds = posts.stream().map(Post::getUserId).collect(Collectors.toSet());
+
+        //    b. 一次 SQL 查完所有作者 -> SELECT * FROM user WHERE id IN (101, 102)
+        //    c. 转成 Map 方便查找 -> {101: UserA, 102: UserB}
+        Map<Long, User> userMap = userService.listByIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        // =================================================
+        // 2. 准备当前登录用户
+        // =================================================
+        // 我们需要知道“我”是谁，才能判断“我”有没有点赞
+        User loginUser = UserHolder.getUser();
+
+        // =================================================
+        // 3. 组装流水线
+        // =================================================
+        List<PostVO> voList = posts.stream().map(post -> {
+            PostVO vo = new PostVO();
+            // 属性拷贝：把 Post 里的 id, content, createTime 拷给 VO
+            BeanUtil.copyProperties(post, vo);
+
+            // --- 装修步骤 A: 贴上作者头像和名字 ---
+            User author = userMap.get(post.getUserId()); // 直接从内存 Map 拿，不查库
+            if (author != null) {
+                vo.setUsername(author.getNickname());
+                vo.setUserAvatar(author.getAvatar());
+            }
+
+            String likeKey = POST_LIKED_KEY + post.getId();
+
+            // --- 装修步骤 B: 计算个性化状态 ---
+            if (loginUser != null) {
+                // 我是不是楼主？(决定是否显示删除按钮)
+                vo.setIsOwner(loginUser.getId().equals(post.getUserId()));
+
+                // 我点赞了吗？(决定爱心是不是红的)
+                // 去 Redis 的 Set 集合里查：我的 ID 在不在这个帖子的点赞名单里？
+                Boolean isLiked = stringRedisTemplate.opsForSet().isMember(likeKey, loginUser.getId().toString());
+                vo.setIsLiked(Boolean.TRUE.equals(isLiked));
+
+                // 覆盖点赞数
+            } else {
+                // 没登录，当然全都是 false
+                vo.setIsLiked(false);
+                vo.setIsOwner(false);
+            }
+
+            // 查 Redis 里的 Set 大小以得到点赞数，避免数据不一致性
+            Long realLikeCount = stringRedisTemplate.opsForSet().size(likeKey);
+
+            // 如果 Redis 里有数据 (比如你刚取消赞，Redis是8，DB是9)，这里强行用 8 覆盖 9
+            if (realLikeCount != null && realLikeCount > 0) {
+                vo.setLikeCount(realLikeCount.intValue());
+            }
+
+            return vo;
+        }).collect(Collectors.toList());
+
+        // 把装修好的列表放回分页对象
+        voPage.setRecords(voList);
+        return voPage;
+    }
 
     @Override
     public void likePost(Long postId) {

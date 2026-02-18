@@ -1,19 +1,17 @@
 package com.luno.echo.model.vo;
 
 import lombok.Data;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * 帖子视图对象
- * 作用：专门用于返回给前端展示，包含数据库里没有的字段（如 isLiked）
+ * 帖子视图对象 (返回给前端的最终数据)
  */
 @Data
 public class PostVO implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    // --- 1. 原样拷贝 Post 的字段 ---
+    // --- 1. 帖子基础信息 ---
     private Long id;
     private Long userId;
     private String content;
@@ -22,14 +20,25 @@ public class PostVO implements Serializable {
     private Integer commentCount;
     private LocalDateTime createTime;
 
-    // --- 2. 新增前端特有字段 ---
-    
+    // --- 2. 核心用户信息 (本次新增 🔥) ---
+    /**
+     * 作者昵称
+     */
+    private String username;
+
+    /**
+     * 作者头像
+     */
+    private String userAvatar;
+
+    // --- 3. 交互状态 (个性化字段) ---
     /**
      * 当前登录用户是否点赞
      */
     private Boolean isLiked;
 
-    // (可选) 未来扩展：发帖人的信息
-    // private String userNickname;
-    // private String userAvatar;
+    /**
+     * 当前登录用户是否是楼主 (用于控制显示"删除"按钮)
+     */
+    private Boolean isOwner;
 }
