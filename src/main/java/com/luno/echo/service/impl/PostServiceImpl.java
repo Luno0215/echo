@@ -142,8 +142,21 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             throw new BusinessException(ErrorCode.NO_AUTH, "你无权删除他人的树洞");
         }
 
-        // 4. 执行删除
-        return this.removeById(postId);
+        // 4. 【核心】先删 MySQL
+        boolean result = this.removeById(postId);
+        if (!result) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        // 5. 【核心】再删 ES
+        try {
+            postEsRepository.deleteById(postId);
+            log.info("ES 删除了一条帖子 postID为: {}", postId);
+        } catch (Exception e) {
+            log.error("Delete ES post failed, postId: {}", postId, e);
+        }
+
+        return true;
     }
 
     // 分页查询帖子普通版
