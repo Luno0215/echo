@@ -18,4 +18,10 @@ public class RedisConstants {
      * 例子：echo:post:like:5a2b3c...
      */
     public static final String POST_LIKED_KEY = "echo:post:like:";
+
+    public static final String POST_DETAIL_KEY = "echo:post:detail:";
+
+    public static final String POST_VIEW_KEY = "echo:post:view:";
+
+    public static final String POST_LIKE_DIRTY_KEY = "echo:post:dirty_like";
 }

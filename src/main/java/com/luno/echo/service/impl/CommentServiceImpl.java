@@ -28,6 +28,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.luno.echo.common.constant.RedisConstants.POST_DETAIL_KEY;
+
 /**
 * @author Luno
 * @description 针对表【tb_comment(评论表)】的数据库操作Service实现
@@ -113,7 +115,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment>
         postMapper.incrCommentCount(commentAddRequest.getPostId());
 
         // 5. 删除 Redis 缓存
-        String cacheKey = "echo:post:detail:" + commentAddRequest.getPostId();
+        String cacheKey = POST_DETAIL_KEY + commentAddRequest.getPostId();
         stringRedisTemplate.delete(cacheKey);
 
         // 6. 返回生成的 ID

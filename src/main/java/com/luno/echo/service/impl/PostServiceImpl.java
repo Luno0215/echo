@@ -35,6 +35,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static com.luno.echo.common.constant.RedisConstants.*;
+
 /**
 * @author Luno
 * @description 针对表【tb_post(树洞帖子表)】的数据库操作Service实现
@@ -139,7 +141,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
             // 5.2 处理 "是否点赞" 逻辑
             if (loginUser != null) {
                 // 如果用户已登录，去 Redis 查 Set
-                String key = RedisConstants.POST_LIKED_KEY + post.getId();
+                String key = POST_LIKED_KEY + post.getId();
                 Boolean isMember = stringRedisTemplate.opsForSet().isMember(key, loginUser.getId().toString());
                 postVO.setIsLiked(Boolean.TRUE.equals(isMember));
             } else {
@@ -207,7 +209,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         Long userId = UserHolder.getUser().getId();
 
         // 2. 定义 Redis Key
-        String likeKey = "echo:post:like:" + postId;
+        String likeKey = POST_LIKED_KEY + postId;
 
         // 3. 判断用户是否点过赞 (Redis Set 操作)
         Boolean isMember = stringRedisTemplate.opsForSet().isMember(likeKey, userId.toString());
@@ -228,16 +230,16 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         // 4. 【关键一步】将该帖子 ID 加入“脏数据集合”
         // 告诉定时任务：“喂，这个帖子的点赞数变了，等会儿记得同步到数据库！”
-        stringRedisTemplate.opsForSet().add("echo:post:dirty_like", postId.toString());
+        stringRedisTemplate.opsForSet().add(POST_LIKE_DIRTY_KEY, postId.toString());
 
         // 5. 【清理缓存】
         // 因为点赞数变了，详情页的缓存(PostDetailVO)也脏了，删掉它让它重建
-        stringRedisTemplate.delete("echo:post:detail:" + postId);
+        stringRedisTemplate.delete(POST_DETAIL_KEY + postId);
     }
 
     @Override
     public PostDetailVO getPostDetail(Long id) {
-        String cacheKey = "echo:post:detail:" + id;
+        String cacheKey = POST_DETAIL_KEY + id;
 
         // 1. 【Redis 读取】公共数据
         String json = stringRedisTemplate.opsForValue().get(cacheKey);
@@ -253,7 +255,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
         }
 
         // 【强制修正】去 Redis 查实时的点赞数，防止刚取消完点赞导致点赞数不一致
-        String likeKey = "echo:post:like:" + id;
+        String likeKey = POST_LIKED_KEY + id;
 
         // 获取 Redis 里的真实个数 (比如你取消了点赞，这里现在就是 8)
         Long realLikeCount = stringRedisTemplate.opsForSet().size(likeKey);
@@ -265,7 +267,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         // 4. 【浏览量】Redis 原子自增 (独立于 VO 缓存)
         // 使用 String 结构单独存浏览量，避免每次改浏览量都要重写整个大 JSON
-        Long viewCount = stringRedisTemplate.opsForValue().increment("echo:post:view:" + id);
+        Long viewCount = stringRedisTemplate.opsForValue().increment(POST_VIEW_KEY + id);
         vo.setViewCount(viewCount.intValue());
 
         // 5. 【个性化填充】这一步最关键！不能缓存！
