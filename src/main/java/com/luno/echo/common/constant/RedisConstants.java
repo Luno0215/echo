@@ -15,13 +15,26 @@ public class RedisConstants {
 
     /**
      * 帖子点赞的 Key 前缀
-     * 例子：echo:post:like:5a2b3c...
+     * 例子：echo:post:2
      */
     public static final String POST_LIKED_KEY = "echo:post:like:";
 
+    /**
+     * 帖子详情的 Key 前缀
+     * 例子：echo:post:detail:2
+     */
     public static final String POST_DETAIL_KEY = "echo:post:detail:";
 
+    /**
+     * 帖子浏览量 Key 前缀
+     * 例子：echo:post:view:2
+     */
     public static final String POST_VIEW_KEY = "echo:post:view:";
 
+    /**
+     * 帖子点赞的 Key 前缀
+     * 例子：echo:post:dirty_like:2
+     */
     public static final String POST_LIKE_DIRTY_KEY = "echo:post:dirty_like";
+
 }
