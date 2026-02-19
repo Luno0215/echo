@@ -7,6 +7,7 @@ import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
 import com.luno.echo.model.dto.UserLoginRequest;
 import com.luno.echo.model.dto.UserRegisterRequest;
+import com.luno.echo.model.dto.UserUpdateRequest;
 import com.luno.echo.model.entity.User;
 import com.luno.echo.service.UserService;
 import jakarta.annotation.Resource;
@@ -31,10 +32,6 @@ public class UserController {
      */
     @PostMapping("/register")
     public Result<Long> userRegister(@RequestBody UserRegisterRequest userRegisterRequest) {
-        // 1. Controller 层只做最基础的非空判断，避免空指针
-        if (userRegisterRequest == null) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        }
 
         // 2. 解析数据
         String userAccount = userRegisterRequest.getUsername();
@@ -58,9 +55,6 @@ public class UserController {
      */
     @PostMapping("/login")
     public Result<String> userLogin(@RequestBody UserLoginRequest userLoginRequest) {
-        if (userLoginRequest == null) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        }
 
         String userAccount = userLoginRequest.getUsername();
         String userPassword = userLoginRequest.getPassword();
@@ -73,6 +67,16 @@ public class UserController {
 
         // 返回 token 给前端
         return Result.ok(token);
+    }
+
+    /**
+     * 更新个人信息 (头像/昵称)
+     */
+    @PostMapping("/update")
+    public Result<Boolean> updateUser(@RequestBody UserUpdateRequest userUpdateRequest) {
+
+        Boolean result = userService.updateUser(userUpdateRequest);
+        return Result.ok(result);
     }
 
     /**

@@ -5,9 +5,12 @@ import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.luno.echo.common.ErrorCode;
+import com.luno.echo.common.UserHolder;
 import com.luno.echo.common.exception.BusinessException;
+import com.luno.echo.model.dto.UserUpdateRequest;
 import com.luno.echo.model.entity.User;
 import com.luno.echo.service.UserService;
 import com.luno.echo.mapper.UserMapper;
@@ -17,8 +20,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static com.luno.echo.common.constant.RedisConstants.LOGIN_USER_KEY;
 import static com.luno.echo.common.constant.RedisConstants.LOGIN_USER_TTL;
@@ -148,6 +149,36 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
 
         // 9. 返回 Token 给 Controller
         return token;
+    }
+
+    @Override
+    public Boolean updateUser(UserUpdateRequest userUpdateRequest) {
+        // 1. 从 ThreadLocal 获取当前登录用户
+        User currentUser = UserHolder.getUser();
+        if (currentUser == null || currentUser.getId() == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN, "未登录");
+        }
+
+        // 2. 构造要更新的实体对象
+        User updateObj = new User();
+        // 核心：只更新当前登录人的 ID 对应的数据
+        updateObj.setId(currentUser.getId());
+
+        // 如果前端传了昵称，就更新昵称
+        if (StrUtil.isNotBlank(userUpdateRequest.getNickname())) {
+            updateObj.setNickname(userUpdateRequest.getNickname());
+        }
+
+        // 如果前端传了头像 URL，就更新头像
+        if (StrUtil.isNotBlank(userUpdateRequest.getAvatar())) {
+            updateObj.setAvatar(userUpdateRequest.getAvatar());
+        }
+
+        // 3. 调用 MyBatis Plus 自带的 updateById 方法
+        // 这里会自动生成 SQL: UPDATE tb_user SET avatar = ?, nickname = ? WHERE id = ?
+        boolean result = updateById(updateObj);
+
+        return result;
     }
 
     /**

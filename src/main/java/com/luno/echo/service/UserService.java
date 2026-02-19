@@ -1,5 +1,6 @@
 package com.luno.echo.service;
 
+import com.luno.echo.model.dto.UserUpdateRequest;
 import com.luno.echo.model.entity.User;
 import com.baomidou.mybatisplus.extension.service.IService;
 
@@ -29,4 +30,5 @@ public interface UserService extends IService<User> {
     String userLogin(String username, String password);
 
 
+    Boolean updateUser(UserUpdateRequest updateUser);
 }
