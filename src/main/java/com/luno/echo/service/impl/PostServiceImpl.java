@@ -672,13 +672,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
                 Boolean isLiked = stringRedisTemplate.opsForSet().isMember(likeKey, loginUser.getId().toString());
                 vo.setIsLiked(Boolean.TRUE.equals(isLiked));
 
-                // 覆盖点赞数
             } else {
                 // 没登录，当然全都是 false
                 vo.setIsLiked(false);
                 vo.setIsOwner(false);
             }
 
+            // 覆盖点赞数
             // 查 Redis 里的 Set 大小以得到点赞数，避免数据不一致性
             Long realLikeCount = stringRedisTemplate.opsForSet().size(likeKey);
 

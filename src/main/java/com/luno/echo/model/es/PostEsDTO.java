@@ -17,11 +17,13 @@ public class PostEsDTO implements Serializable {
     @Id
     private Long id;
 
-    // 2. analyzer = "standard": 标准分词器 (按字/词切分)
-    // 如果你以后装了 IK 分词器，这里可以改成 "ik_max_word"
-    @Field(type = FieldType.Text, analyzer = "standard")
+    // 1. analyzer = "standard": 标准分词器 (按字/词切分)
+    // 2. analyzer = "ik_max_word": 存数据时，分得最细 (比如 "清华大学" -> "清华"、"大学"、"清华大学")
+    // 3. searchAnalyzer = "ik_smart": 搜数据时，分得最粗 (比如搜 "清华大学" -> 就当一个词搜，更精准)
+    @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
     private String content;
 
+    // 标签依然用 Keyword，精确匹配
     @Field(type = FieldType.Keyword) // Keyword 表示不分词，精确匹配
     private String tag;
 
