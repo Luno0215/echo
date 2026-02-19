@@ -14,6 +14,8 @@ import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/post")
 @Slf4j
@@ -123,5 +125,13 @@ public class PostController {
 
         // 修正：直接返回 Integer 类型的 count
         return Result.ok(count);
+    }
+
+    /**
+     * 获取搜索热词 (前10名)
+     */
+    @GetMapping("/search/hot")
+    public Result<List<String>> listHotSearch() {
+        return Result.ok(postService.listHotSearch());
     }
 }

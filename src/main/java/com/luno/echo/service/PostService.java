@@ -8,6 +8,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.luno.echo.model.vo.PostDetailVO;
 import com.luno.echo.model.vo.PostVO;
 
+import java.util.List;
+
 /**
 * @author Luno
 * @description 针对表【tb_post(树洞帖子表)】的数据库操作Service
@@ -52,4 +54,10 @@ public interface PostService extends IService<Post> {
      * @return 同步成功的条数
      */
     int syncAllToEs();
+
+    /**
+     * 获取热搜列表
+     * @return 热门搜索
+     */
+    List<String> listHotSearch();
 }

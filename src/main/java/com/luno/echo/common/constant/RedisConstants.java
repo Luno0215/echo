@@ -37,4 +37,10 @@ public class RedisConstants {
      */
     public static final String POST_LIKE_DIRTY_KEY = "echo:post:dirty_like";
 
+    /**
+     * 帖子搜索 Key
+     * 例子：search:hot:measure
+     */
+    public static final String SEARCH_HOT_MEASURE = "search:hot:measure";
+
 }

@@ -37,6 +37,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -488,6 +489,27 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
      */
     private Page<PostVO> searchByEs(PostQueryRequest postQueryRequest) {
         // ============================================================
+        // 0. 🔥 【新增】记录搜索热词 (异步执行，不阻塞主线程)
+        // ============================================================
+        String searchText = postQueryRequest.getContent(); // 获取搜索关键词
+
+        if (StrUtil.isNotBlank(searchText)) {
+            // 开启一个异步线程去写 Redis，毫秒级返回，不影响用户体验
+            CompletableFuture.runAsync(() -> {
+                // ZINCRBY key increment member
+                // 如果 key 不存在会自动创建
+                // 如果 member (搜索词) 不存在会自动设为 0 并加 1
+                // 使用常量 RedisConstant.POST_HOT_MEASURE
+                stringRedisTemplate.opsForZSet().incrementScore(
+                        SEARCH_HOT_MEASURE,             // 定义的常量 "search:hot:measure"
+                        searchText.trim(),              // 去掉首尾空格，防止 " Java" 和 "Java" 被当成两个词
+                        1                               // 每次搜索，分数 +1
+                );
+            });
+        }
+
+
+        // ============================================================
         // 1. 准备搜索参数
         // ============================================================
 
@@ -875,6 +897,21 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post>
 
         log.info("全量同步完成，MySQL总数: {}, ES写入数: {}", postList.size(), successCount);
         return successCount;
+    }
+
+    @Override
+    public List<String> listHotSearch() {
+        // ZREVRANGE key start end
+        // 0 表示第 1 名，9 表示第 10 名 (共 10 个)
+        Set<String> range = stringRedisTemplate.opsForZSet().reverseRange(
+                SEARCH_HOT_MEASURE, 0, 9
+        );
+
+        // 把 Set 转成 List 返回
+        if (CollUtil.isEmpty(range)) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(range);
     }
 }
 
